@@ -13,7 +13,7 @@ February 2024 <br>
 
 Accompanies preprint:<br>
 <br>
-<a href="https://globalecologyflinders.com/people/#DIRECTOR">Bradshaw, CJA</a>, <a href="https://futurechildhealth.org/team/dr-melinda-a-judge/">MA Judge</a>, <a href="https://www.ioes.ucla.edu/person/daniel-blumstein/">DT Blumstein</a>, <a href="https://biology.stanford.edu/people/paul-ehrlich">PR Ehrlich</a>, <a href="https://www.linkedin.com/in/aisha-dasgupta-phd-911a4182/">ANZ Dasgupta</a>, <a href="https://www.wackernagel.info">M Wackernagel</a>, <a href="https://futurechildhealth.org/team/dr-lewis-j-z-weeda/">LJZ Weeda</a>, <a href="https://futurechildhealth.org/team/professor-peter-le-souef/">PN Le Souëf</a>. <a href="https://doi.org/10.2139/ssrn.4788003">Global human population ended self-facilitation in the 1950s</a>. <em>SSRN</em> doi:10.2139/ssrn.4788003
+<a href="https://globalecologyflinders.com/people/#DIRECTOR">Bradshaw, CJA</a>, <a href="https://futurechildhealth.org/team/dr-melinda-a-judge/">MA Judge</a>, <a href="https://www.ioes.ucla.edu/person/daniel-blumstein/">DT Blumstein</a>, <a href="https://biology.stanford.edu/people/paul-ehrlich">PR Ehrlich</a>, <a href="https://www.linkedin.com/in/aisha-dasgupta-phd-911a4182/">ANZ Dasgupta</a>, <a href="https://www.wackernagel.info">M Wackernagel</a>, <a href="https://futurechildhealth.org/team/dr-lewis-j-z-weeda/">LJZ Weeda</a>, <a href="https://futurechildhealth.org/team/professor-peter-le-souef/">PN Le Souëf</a>. 2024. <a href="https://doi.org/10.2139/ssrn.4788003">Global human population ended self-facilitation in the 1950s</a>. <em>SSRN</em> doi:10.2139/ssrn.4788003
 <br>
 <br>
 and paper in review:<br>

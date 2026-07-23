@@ -52,6 +52,7 @@ The ecological concept of human carrying capacity is necessarily complicated bec
 - <em>UGA.csv</em>: <a href="https://data.un.org/Data.aspx?d=POP&f=tableCode%3a1">United Nations Population Division data for Uganda</a>
 - <em>UNpop.csv</em>: <a href="https://data.un.org/Data.aspx?d=POP&f=tableCode%3a1">United Nations Population Division data</a>
 - <em>worldpophist.csv</em>: <a href="https://data.un.org/Data.aspx?d=POP&f=tableCode%3a1">historical United Nations Population Division data</a>
+- <em><wid_all_data></em>: download full World Inequality Database <a href="https://wid.world/data/#:~:text=DOWNLOAD%20FULL-,DATASET,-NO%20INDICATOR%20SELECTED">dataset</a> to a 'wid_all_data' directory
 
 ## R libraries
 <code>boot</code>, <code>dismo</code>, <code>gbm</code>, <code>ggplot2</code>, <code>gridExtra</code>, <code>lmtest</code>,<code>performance</code>, <code>plotrix</code>, <code>sjPlot</code>, <code>tmvnsim</code>,<code>truncnorm</code>, <code>wCorr</code>

@@ -20,6 +20,7 @@ library(truncnorm)
 library(wCorr)
 
 # source files
+setwd("~/Documents/GitHub/globalHumanPopSwitch/scripts")
 source("new_lmer_AIC_tables3.R")
 source("r.squared.R")
 
@@ -83,6 +84,7 @@ NonSeqSample <- function(x, size, ord=1, replace) {
 
 ## Historical estimates of world population
 ## census.gov/data/tables/time-series/demo/international-programs/historical-est-worldpop.html
+setwd("~/Documents/GitHub/globalHumanPopSwitch/data")
 hpop <- read.csv('Npre1950.csv', sep=",", header=T)
 head(hpop)
 hpop$pop.md <- apply(hpop[,c(2,3)], MARGIN=1, median, na.rm=T)
@@ -3311,3 +3313,853 @@ colnames(age.mn.out) <- c("year", "Ntot", "ageMN", "young")
 
 plot(age.mn.out$Ntot, age.mn.out$young, type="l", xlab="human population size", ylab="proportion < 15 years")
 age.mn.out$year[which(age.mn.out$young == max(age.mn.out$young))]
+
+
+
+########################################################################
+## inequality relative to global environmental deterioration          ##
+########################################################################
+
+# Set WID_DATA_DIR to the directory containing the WID_data_XX.csv files.
+# These series are WID's published regional aggregates, not averages of
+# national Gini coefficients.
+wid.dir <- '/Users/brad0317/Documents/Papers/Health/Human pop shift/data/inequality/wid_all_data'
+#wid.dir <- Sys.getenv("WID_DATA_DIR")
+if (!nzchar(wid.dir) || !dir.exists(wid.dir)) {
+  stop("Set WID_DATA_DIR to the directory containing WID_data_XX.csv files.")
+}
+
+wid.scopes <- data.frame(
+  scope=c("World", "Sub-Saharan Africa", "Latin America (WID)", "MENA (WID)"),
+  code=c("WO", "XF", "XL", "XN"),
+  alignment=c("Global series",
+              "Matches the project's Sub-Saharan Africa region",
+              "Published WID aggregate; not an exact LAC match",
+              "Published WID aggregate; not an exact NAWA match"),
+  stringsAsFactors=F
+)
+
+# Do not construct Oceania, ESEA, EUNA, or CSA from national Ginis: a
+# population-weighted mean omits between-country inequality.
+read.wid.gini <- function(wid.dir, scope, code, alignment) {
+  file <- file.path(wid.dir, paste0("WID_data_", code, ".csv"))
+  if (!file.exists(file)) {
+    stop(paste("Missing WID input:", file))
+  }
+
+  dat <- read.csv(file, sep=";", stringsAsFactors=F)
+  dat <- dat[dat$country == code &
+               dat$variable %in% c("gdiincj992", "gptincj992") &
+               dat$percentile == "p0p100" &
+               as.character(dat$age) == "992" &
+               dat$pop == "j", ]
+
+  if (nrow(dat) == 0) {
+    stop(paste("No adult equal-split WID Gini series found for", code))
+  }
+  if (any(duplicated(dat[,c("variable", "year")]))) {
+    stop(paste("Duplicate WID Gini observations found for", code))
+  }
+
+  data.frame(scope=scope,
+             wid.code=code,
+             alignment=alignment,
+             inequality.measure=ifelse(dat$variable == "gdiincj992",
+                                        "Disposable-income Gini",
+                                        "Pre-tax national-income Gini"),
+             year=as.integer(dat$year),
+             gini=as.numeric(dat$value),
+             stringsAsFactors=F)
+}
+
+wid.series <- do.call(rbind, lapply(seq_len(nrow(wid.scopes)), function(i) {
+  read.wid.gini(wid.dir=wid.dir,
+                scope=wid.scopes$scope[i],
+                code=wid.scopes$code[i],
+                alignment=wid.scopes$alignment[i])
+}))
+wid.series <- wid.series[order(wid.series$scope,
+                               wid.series$inequality.measure,
+                               wid.series$year), ]
+
+# Global environmental indicators complete from 1965-2023; WID
+# Gini series provide common 1980-2023 analysis window.
+data.dir.GH <- '/Users/brad0317/Documents/GitHub/globalHumanPopSwitch/data'
+wid.environment <- read.csv(file.path(data.dir.GH, "consump.csv"), header=T)
+wid.environment <- data.frame(year=wid.environment$year,
+                              pop=wid.environment$pop,
+                              pcEconsum=wid.environment$pcEconsum,
+                              TaMED=wid.environment$TaMED,
+                              footprint=wid.environment$footprint,
+                              CO2eGt=wid.environment$CO2eGt)
+wid.dat <- wid.series[wid.series$year %in% wid.environment$year, ]
+wid.environment.match <- wid.environment[match(wid.dat$year,
+                                                wid.environment$year), -1]
+wid.dat <- cbind(wid.dat, wid.environment.match)
+head(wid.dat)
+#wid.dat <- wid.dat[order(c(wid.dat$scope, wid.dat$inequality.measure, wid.dat$year)), ]
+
+
+
+########################################################################
+## regional energy use and ecological footprint                        ##
+########################################################################
+
+# Country energy use is sourced from the World Bank and ecological footprint
+# and population from the Global Footprint Network. Regions follow WID's
+# country classification so the predictors align with WID regional Gini series.
+wid.regional.environment.file <- file.path(data.dir.GH,
+                                           "WID_regional_energy_footprint.csv")
+wid.regional.sources.file <- file.path(data.dir.GH,
+                                       "WID_regional_energy_footprint_sources.csv")
+wid.refresh.regional.environment <- identical(
+  tolower(Sys.getenv("WID_REFRESH_REGIONAL_ENVIRONMENT", "false")), "true"
+)
+
+wid.countries <- read.csv(file.path(wid.dir, "WID_countries.csv"),
+                          sep=";",
+                          stringsAsFactors=F)
+wid.region.membership <- rbind(
+  data.frame(scope="Sub-Saharan Africa",
+             isoa2=wid.countries$alpha2[
+               wid.countries$region == "Africa" &
+                 wid.countries$region2 != "North Africa"
+             ]),
+  data.frame(scope="Latin America (WID)",
+             isoa2=wid.countries$alpha2[
+               wid.countries$region == "Americas" &
+                 wid.countries$region2 != "North America"
+             ]),
+  data.frame(scope="MENA (WID)",
+             isoa2=wid.countries$alpha2[
+               (wid.countries$region == "Africa" &
+                  wid.countries$region2 == "North Africa") |
+                 (wid.countries$region == "Asia" &
+                    wid.countries$region2 == "West Asia")
+             ])
+)
+wid.region.membership <- wid.region.membership[
+  !is.na(wid.region.membership$isoa2) &
+    nchar(wid.region.membership$isoa2) == 2, ]
+wid.region.membership$country.name <- wid.countries$shortname[
+  match(wid.region.membership$isoa2, wid.countries$alpha2)
+]
+
+wid.gfn.get <- function(record) {
+  handle <- curl::new_handle()
+  curl::handle_setheaders(
+    handle,
+    "Origin"="https://data.footprintnetwork.org",
+    "Referer"="https://data.footprintnetwork.org/",
+    "Accept"="application/json",
+    "User-Agent"="R regional inequality analysis"
+  )
+  response <- curl::curl_fetch_memory(
+    paste0("https://api.footprintnetwork.org/v1/data/all/all/", record),
+    handle=handle
+  )
+  if (response$status_code != 200) {
+    stop(paste("Global Footprint Network API request failed for", record,
+               "with HTTP status", response$status_code))
+  }
+  jsonlite::fromJSON(rawToChar(response$content))
+}
+
+wid.owid.energy.get <- function() {
+  handle <- curl::new_handle()
+  curl::handle_setheaders(handle, "User-Agent"="R regional inequality analysis")
+  response <- curl::curl_fetch_memory(
+    "https://ourworldindata.org/grapher/per-capita-energy-use.csv",
+    handle=handle
+  )
+  if (response$status_code != 200) {
+    stop(paste("OWID per-capita energy-use download failed with HTTP status",
+               response$status_code))
+  }
+  dat <- read.csv(text=rawToChar(response$content), stringsAsFactors=F)
+  data.frame(country.name=dat$Entity,
+             year=as.integer(dat$Year),
+             energy.gj.per.capita=as.numeric(dat$Per.capita.energy.consumption) *
+               0.0036,
+             stringsAsFactors=F)
+}
+
+if (!file.exists(wid.regional.environment.file) ||
+    wid.refresh.regional.environment) {
+  if (!requireNamespace("curl", quietly=TRUE) ||
+      !requireNamespace("jsonlite", quietly=TRUE)) {
+    stop("Install the curl and jsonlite packages to download regional energy and footprint data.")
+  }
+
+  footprint <- wid.gfn.get("EFCtot")
+  population <- wid.gfn.get("pop")
+  energy <- wid.owid.energy.get()
+
+  footprint <- footprint[footprint$isoa2 %in% wid.region.membership$isoa2 &
+                           footprint$year >= 1980 &
+                           footprint$year <= 2023, ]
+  population <- population[population$isoa2 %in% wid.region.membership$isoa2 &
+                             population$year >= 1980 &
+                             population$year <= 2023, ]
+  footprint.key <- paste(footprint$isoa2, footprint$year)
+  population.index <- match(footprint.key,
+                            paste(population$isoa2, population$year))
+  energy.name.aliases <- c(
+    "Côte d'Ivoire"="Cote d'Ivoire",
+    "Tanzania, United Republic of"="Tanzania",
+    "Congo, Democratic Republic of"="Democratic Republic of Congo",
+    "Cabo Verde"="Cape Verde",
+    "Venezuela, Bolivarian Republic of"="Venezuela",
+    "Türkiye"="Turkey",
+    "Libyan Arab Jamahiriya"="Libya",
+    "Russian Federation"="Russia",
+    "State of Palestine"="Palestine"
+  )
+  energy.country.name <- footprint$countryName
+  alias.index <- match(energy.country.name, names(energy.name.aliases))
+  energy.country.name[!is.na(alias.index)] <- energy.name.aliases[alias.index[!is.na(alias.index)]]
+  energy.index <- match(paste(energy.country.name, footprint$year),
+                        paste(energy$country.name, energy$year))
+  regional.country.dat <- data.frame(
+    isoa2=footprint$isoa2,
+    year=footprint$year,
+    footprint.total.gha=footprint$value,
+    population=population$value[population.index],
+    energy.gj.per.capita=energy$energy.gj.per.capita[energy.index],
+    stringsAsFactors=F
+  )
+  regional.country.dat <- regional.country.dat[
+    complete.cases(regional.country.dat), ]
+  regional.country.dat$scope <- wid.region.membership$scope[
+    match(regional.country.dat$isoa2, wid.region.membership$isoa2)
+  ]
+
+  wid.regional.environment <- do.call(rbind, lapply(
+    split(regional.country.dat,
+          list(regional.country.dat$scope, regional.country.dat$year),
+          drop=T),
+    function(x) {
+      data.frame(
+        scope=x$scope[1],
+        year=x$year[1],
+        n.countries=nrow(x),
+        population=sum(x$population),
+        energy.gj.per.capita=sum(x$energy.gj.per.capita * x$population) /
+          sum(x$population),
+        footprint.total.gha=sum(x$footprint.total.gha),
+        footprint.gha.per.capita=sum(x$footprint.total.gha) / sum(x$population),
+        stringsAsFactors=F
+      )
+    }
+  ))
+  wid.regional.environment <- wid.regional.environment[
+    order(wid.regional.environment$scope, wid.regional.environment$year), ]
+  write.csv(wid.regional.environment, wid.regional.environment.file, row.names=F)
+
+  wid.regional.sources <- data.frame(
+    dataset=c("Per-capita primary-energy consumption",
+              "National Footprint and Biocapacity Accounts"),
+    provider=c("Our World in Data",
+               "Global Footprint Network"),
+    url=c("https://ourworldindata.org/grapher/per-capita-energy-use.csv",
+          "https://api.footprintnetwork.org/v1/data/all/all/EFCtot"),
+    unit=c("GJ per person; converted from kWh",
+           "Global hectares"),
+    stringsAsFactors=F
+  )
+  write.csv(wid.regional.sources, wid.regional.sources.file, row.names=F)
+} else {
+  wid.regional.environment <- read.csv(wid.regional.environment.file,
+                                       stringsAsFactors=F)
+}
+
+
+########################################################################
+## regional greenhouse-gas emissions                                  ##
+########################################################################
+
+# Climate Watch reports territorial emissions in tonnes of CO2-equivalents
+# by sector. Its annual country coverage starts in 1990, limiting these
+# regional models to the 1990--2023 WID overlap.
+wid.regional.emissions.file <- file.path(data.dir.GH,
+                                         "WID_regional_emissions.csv")
+wid.regional.emissions.sources.file <- file.path(
+  data.dir.GH, "WID_regional_emissions_sources.csv"
+)
+wid.refresh.regional.emissions <- identical(
+  tolower(Sys.getenv("WID_REFRESH_REGIONAL_EMISSIONS", "false")), "true"
+)
+
+wid.owid.ghg.get <- function() {
+  handle <- curl::new_handle()
+  curl::handle_setheaders(handle, "User-Agent"="R regional inequality analysis")
+  response <- curl::curl_fetch_memory(
+    "https://ourworldindata.org/grapher/greenhouse-gas-emissions-by-sector.csv",
+    handle=handle
+  )
+  if (response$status_code != 200) {
+    stop(paste("OWID greenhouse-gas download failed with HTTP status",
+               response$status_code))
+  }
+  dat <- read.csv(text=rawToChar(response$content), stringsAsFactors=F)
+  sector.columns <- setdiff(names(dat), c("Entity", "Code", "Year"))
+  sector.values <- as.matrix(dat[sector.columns])
+  emissions.co2e.tonnes <- rowSums(sector.values, na.rm=T)
+  emissions.co2e.tonnes[rowSums(!is.na(sector.values)) == 0] <- NA
+  data.frame(
+    country.name=dat$Entity,
+    year=as.integer(dat$Year),
+    emissions.co2e.tonnes=emissions.co2e.tonnes,
+    stringsAsFactors=F
+  )
+}
+
+if (!file.exists(wid.regional.emissions.file) ||
+    wid.refresh.regional.emissions) {
+  if (!requireNamespace("curl", quietly=TRUE)) {
+    stop("Install the curl package to download regional greenhouse-gas data.")
+  }
+
+  ghg.name.aliases <- c(
+    "DR Congo"="Democratic Republic of Congo",
+    "Cabo Verde"="Cape Verde",
+    "Swaziland"="Eswatini",
+    "Russian Federation"="Russia",
+    "Syrian Arab Republic"="Syria",
+    "Palestine"="Palestine"
+  )
+  ghg.country.name <- wid.region.membership$country.name
+  alias.index <- match(ghg.country.name, names(ghg.name.aliases))
+  ghg.country.name[!is.na(alias.index)] <- ghg.name.aliases[
+    alias.index[!is.na(alias.index)]
+  ]
+  ghg <- wid.owid.ghg.get()
+  ghg <- ghg[
+    ghg$country.name %in% ghg.country.name &
+      ghg$year >= 1990 & ghg$year <= 2023 &
+      !is.na(ghg$emissions.co2e.tonnes),
+  ]
+  ghg$scope <- wid.region.membership$scope[
+    match(ghg$country.name, ghg.country.name)
+  ]
+  wid.regional.emissions <- do.call(rbind, lapply(
+    split(ghg, list(ghg$scope, ghg$year), drop=T),
+    function(x) {
+      data.frame(
+        scope=x$scope[1],
+        year=x$year[1],
+        n.countries=nrow(x),
+        emissions.co2e.tonnes=sum(x$emissions.co2e.tonnes),
+        stringsAsFactors=F
+      )
+    }
+  ))
+  wid.regional.emissions$key <- paste(wid.regional.emissions$scope,
+                                      wid.regional.emissions$year)
+  environment.key <- paste(wid.regional.environment$scope,
+                           wid.regional.environment$year)
+  environment.index <- match(wid.regional.emissions$key, environment.key)
+  wid.regional.emissions$population <- wid.regional.environment$population[
+    environment.index
+  ]
+  wid.regional.emissions$emissions.co2e.tonnes.per.capita <-
+    wid.regional.emissions$emissions.co2e.tonnes /
+    wid.regional.emissions$population
+  wid.regional.emissions$key <- NULL
+  wid.regional.emissions <- wid.regional.emissions[
+    order(wid.regional.emissions$scope, wid.regional.emissions$year), ]
+  write.csv(wid.regional.emissions, wid.regional.emissions.file, row.names=F)
+
+  wid.regional.emissions.sources <- data.frame(
+    dataset="Greenhouse gas emissions by sector",
+    provider="Climate Watch (via Our World in Data)",
+    url="https://ourworldindata.org/grapher/greenhouse-gas-emissions-by-sector.csv",
+    unit="Tonnes of CO2-equivalents; sectors summed",
+    stringsAsFactors=F
+  )
+  write.csv(wid.regional.emissions.sources,
+            wid.regional.emissions.sources.file,
+            row.names=F)
+} else {
+  wid.regional.emissions <- read.csv(wid.regional.emissions.file,
+                                     stringsAsFactors=F)
+}
+
+wid.coverage <- do.call(rbind, lapply(split(wid.dat,
+                                            list(wid.dat$scope,
+                                                 wid.dat$inequality.measure),
+                                            drop=T),
+                                    function(x) {
+  data.frame(scope=x$scope[1],
+             wid.code=x$wid.code[1],
+             alignment=x$alignment[1],
+             inequality.measure=x$inequality.measure[1],
+             n.years=nrow(x),
+             first.year=min(x$year),
+             last.year=max(x$year),
+             stringsAsFactors=F)
+}))
+
+wid.coefficient <- function(fit, method, scope, code, alignment,
+                            inequality.measure, environmental.indicator) {
+  nw <- coeftest(fit, vcov=NeweyWest(fit, lag=1, prewhite=F))
+  data.frame(scope=scope,
+             wid.code=code,
+             alignment=alignment,
+             inequality.measure=inequality.measure,
+             environmental.indicator=environmental.indicator,
+             method=method,
+             n=nrow(model.frame(fit)),
+             estimate=nw["environmental", "Estimate"],
+             std.error=nw["environmental", "Std. Error"],
+             statistic=nw["environmental", "t value"],
+             p.value=nw["environmental", "Pr(>|t|)"],
+             stringsAsFactors=F)
+}
+
+wid.association <- function(dat, environmental.indicator) {
+  dat <- dat[order(dat$year), ]
+  level.dat <- data.frame(gini=dat$gini,
+                          environmental=dat[[environmental.indicator]],
+                          year=dat$year)
+  level.fit <- lm(gini ~ environmental + year, data=level.dat)
+
+  diff.dat <- data.frame(year=dat$year[-1],
+                         gini=diff(dat$gini),
+                         environmental=diff(dat[[environmental.indicator]]),
+                         consecutive=diff(dat$year) == 1)
+  diff.dat <- diff.dat[diff.dat$consecutive, ]
+  diff.fit <- lm(gini ~ environmental, data=diff.dat)
+
+  rbind(wid.coefficient(level.fit,
+                        "Level model controlling for linear time trend",
+                        dat$scope[1],
+                        dat$wid.code[1],
+                        dat$alignment[1],
+                        dat$inequality.measure[1],
+                        environmental.indicator),
+        wid.coefficient(diff.fit,
+                        "First-difference model",
+                        dat$scope[1],
+                        dat$wid.code[1],
+                        dat$alignment[1],
+                        dat$inequality.measure[1],
+                        environmental.indicator))
+}
+
+wid.associations <- do.call(rbind, lapply(split(wid.dat,
+                                                list(wid.dat$scope,
+                                                     wid.dat$inequality.measure),
+                                                drop=T),
+                                        function(x) {
+  do.call(rbind, lapply(c("TaMED", "footprint", "CO2eGt"), function(y) {
+    wid.association(x, y)
+  }))
+}))
+
+write.csv(wid.series, "WID_inequality_series.csv", row.names=F)
+write.csv(wid.coverage, "WID_inequality_coverage.csv", row.names=F)
+write.csv(wid.associations, "WID_inequality_associations.csv", row.names=F)
+
+wid.plot.variables <- data.frame(
+  variable=c("TaMED", "footprint", "CO2eGt"),
+  label=c("Global temperature anomaly",
+          "Global ecological footprint",
+          "Global CO2-e emissions (Gt)"),
+  stringsAsFactors=F
+)
+
+wid.plot.dat <- do.call(rbind, lapply(seq_len(nrow(wid.plot.variables)), function(i) {
+  data.frame(scope=wid.dat$scope,
+             inequality.measure=wid.dat$inequality.measure,
+             environmental.indicator=wid.plot.variables$label[i],
+             environmental.value=wid.dat[[wid.plot.variables$variable[i]]],
+             gini=wid.dat$gini,
+             stringsAsFactors=F)
+}))
+wid.plot.dat$scope <- factor(wid.plot.dat$scope, levels=wid.scopes$scope)
+wid.plot.dat$inequality.measure <- factor(wid.plot.dat$inequality.measure,
+                                          levels=c("Disposable-income Gini",
+                                                   "Pre-tax national-income Gini"))
+wid.plot.dat$environmental.indicator <- factor(wid.plot.dat$environmental.indicator,
+                                               levels=wid.plot.variables$label)
+
+wid.bivariate.plot <- ggplot(wid.plot.dat,
+                             aes(x=environmental.value, y=gini)) +
+  geom_point(alpha=0.65, size=1.4) +
+  geom_smooth(method="lm", formula=y ~ x, se=T, colour="firebrick") +
+  facet_grid(inequality.measure + environmental.indicator ~ scope, scales="free") +
+  labs(x=NULL,
+       y="Gini coefficient",
+       title="Bivariate relationships between inequality and global environmental indicators",
+       subtitle="Published WID series, 1980-2023") +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=45, hjust=1),
+        strip.text.y=element_text(angle=0))
+print(wid.bivariate.plot)
+ggsave("WID_inequality_bivariate_plots.png",
+       plot=wid.bivariate.plot,
+       width=16,
+       height=18,
+       units="in",
+       dpi=300)
+
+wid.safe.filename <- function(x) {
+  x <- tolower(gsub("[^[:alnum:]]+", "_", x))
+  gsub("^_|_$", "", x)
+}
+
+wid.individual.plot.files <- character()
+for (inequality.measure in levels(wid.plot.dat$inequality.measure)) {
+  for (environmental.indicator in levels(wid.plot.dat$environmental.indicator)) {
+    dat.plot <- wid.plot.dat[wid.plot.dat$inequality.measure == inequality.measure &
+                             wid.plot.dat$environmental.indicator == environmental.indicator, ]
+
+    wid.individual.plot <- ggplot(dat.plot,
+                                  aes(x=environmental.value, y=gini)) +
+      geom_point(alpha=0.65, size=1.8) +
+      geom_smooth(method="lm", formula=y ~ x, se=T, colour="firebrick") +
+      facet_wrap(~scope, scales="free_x") +
+      labs(x=environmental.indicator,
+           y="Gini coefficient",
+           title=paste(inequality.measure, "and", environmental.indicator),
+           subtitle="Published WID series, 1980-2023") +
+      theme_bw() +
+      theme(axis.text.x=element_text(angle=45, hjust=1))
+    print(wid.individual.plot)
+
+    file <- paste0("WID_",
+                   wid.safe.filename(inequality.measure),
+                   "_by_",
+                   wid.safe.filename(environmental.indicator),
+                   ".png")
+    ggsave(file,
+           plot=wid.individual.plot,
+           width=16,
+           height=5,
+           units="in",
+           dpi=300)
+    wid.individual.plot.files <- c(wid.individual.plot.files, file)
+  }
+}
+
+
+
+########################################################################
+## boosted regression trees including global income inequality         ##
+########################################################################
+
+# The default matches the existing BRT resampling procedure. Set
+# WID_BRT_ITER to a smaller integer for exploratory runs.
+wid.brt.biter <- as.integer(Sys.getenv("WID_BRT_ITER", "1000"))
+wid.brt.points <- 100
+if (is.na(wid.brt.biter) || wid.brt.biter < 2) {
+  stop("WID_BRT_ITER must be an integer of at least 2.")
+}
+
+wid.kappa.vector <- function(x, kappa=2, kappa.n=5) {
+  update <- x
+  for (k in seq_len(kappa.n)) {
+    centre <- mean(update, na.rm=T)
+    spread <- sd(update, na.rm=T)
+    update[update < centre-kappa*spread | update > centre+kappa*spread] <- NA
+  }
+  update
+}
+
+wid.kappa.curves <- function(x, kappa=2, kappa.n=5) {
+  update <- x
+  for (k in seq_len(kappa.n)) {
+    centre <- apply(update, MARGIN=c(1,2), mean, na.rm=T)
+    spread <- apply(update, MARGIN=c(1,2), sd, na.rm=T)
+    for (b in seq_len(dim(update)[3])) {
+      update[,,b] <- ifelse(update[,,b] < centre-kappa*spread |
+                               update[,,b] > centre+kappa*spread,
+                             NA,
+                             update[,,b])
+    }
+  }
+  update
+}
+
+wid.brt.summary <- function(x) {
+  x <- wid.kappa.vector(x)
+  c(lower=unname(quantile(x, probs=0.025, na.rm=T)),
+    median=median(x, na.rm=T),
+    upper=unname(quantile(x, probs=0.975, na.rm=T)))
+}
+
+run.wid.brt <- function(dat, response, inequality.measure,
+                        scope="World",
+                        predictors=c("pop", "pcEconsum", "gini"),
+                        biter=wid.brt.biter, points=wid.brt.points) {
+  dat <- dat[dat$scope == scope &
+             dat$inequality.measure == inequality.measure, ]
+  dat <- dat[,c(predictors, response)]
+  colnames(dat)[4] <- "response"
+  dat <- na.omit(dat)
+
+  if (nrow(dat) < 10) {
+    stop(paste("Insufficient complete WID BRT observations for", response,
+               "and", inequality.measure))
+  }
+
+  initial.fit <- gbm.step(dat,
+                          gbm.x=seq_along(predictors),
+                          gbm.y=4,
+                          family="gaussian",
+                          max.trees=100000,
+                          tolerance=0.0001,
+                          learning.rate=0.0001,
+                          bag.fraction=0.75,
+                          tree.complexity=2,
+                          silent=T,
+                          tolerance.method="auto")
+
+  curve.values <- curve.predictions <- array(
+    data=NA,
+    dim=c(points, length(predictors), biter),
+    dimnames=list(NULL, predictors, NULL)
+  )
+  relative.influence <- matrix(NA,
+                               nrow=biter,
+                               ncol=length(predictors),
+                               dimnames=list(NULL, predictors))
+  d2 <- cv.correlation <- cv.correlation.se <- rep(NA, biter)
+
+  for (b in seq_len(biter)) {
+    dat.resamp <- dat[sample(seq_len(nrow(dat)), size=nrow(dat), replace=T), ]
+    fit <- gbm.step(dat.resamp,
+                    gbm.x=seq_along(predictors),
+                    gbm.y=4,
+                    family="gaussian",
+                    max.trees=100000,
+                    tolerance=0.0001,
+                    learning.rate=0.001,
+                    bag.fraction=0.75,
+                    tree.complexity=2,
+                    silent=T,
+                    tolerance.method="auto")
+    fit.summary <- summary(fit)
+    relative.influence[b,] <- fit.summary$rel.inf[
+      match(predictors, fit.summary$var)
+    ]
+    d2[b] <- 100 * (fit$cv.statistics$deviance.mean -
+                    fit$self.statistics$mean.resid) /
+      fit$cv.statistics$deviance.mean
+    cv.correlation[b] <- 100 * fit$cv.statistics$correlation.mean
+    cv.correlation.se[b] <- 100 * fit$cv.statistics$correlation.se
+
+    for (p in seq_along(predictors)) {
+      response.curve <- plot.gbm(fit,
+                                 i.var=p,
+                                 continuous.resolution=points,
+                                 return.grid=T)
+      curve.values[,p,b] <- response.curve[,1]
+      curve.predictions[,p,b] <- response.curve[,2]
+    }
+    print(b)
+  }
+
+  curve.predictions <- wid.kappa.curves(curve.predictions)
+  response.curves <- do.call(rbind, lapply(seq_along(predictors), function(p) {
+    data.frame(predictor=predictors[p],
+               value=apply(curve.values[,p,], 1, median, na.rm=T),
+               fitted.lower=apply(curve.predictions[,p,], 1, quantile,
+                                  probs=0.025, na.rm=T),
+               fitted.median=apply(curve.predictions[,p,], 1, median, na.rm=T),
+               fitted.upper=apply(curve.predictions[,p,], 1, quantile,
+                                  probs=0.975, na.rm=T))
+  }))
+
+  relative.influence <- apply(relative.influence, 2, wid.brt.summary)
+  relative.influence <- data.frame(predictor=colnames(relative.influence),
+                                   lower=relative.influence["lower",],
+                                   median=relative.influence["median",],
+                                   upper=relative.influence["upper",],
+                                   row.names=NULL)
+  fit.metrics <- data.frame(
+    metric=c("D2", "CV correlation", "CV correlation SE"),
+    rbind(wid.brt.summary(d2),
+          wid.brt.summary(cv.correlation),
+          wid.brt.summary(cv.correlation.se)),
+    row.names=NULL
+  )
+
+  list(initial.fit=initial.fit,
+       response.curves=response.curves,
+       relative.influence=relative.influence,
+       fit.metrics=fit.metrics)
+}
+
+wid.brt.specifications <- expand.grid(
+  response=c("TaMED", "footprint", "CO2eGt"),
+  inequality.measure=c("Disposable-income Gini",
+                       "Pre-tax national-income Gini"),
+  stringsAsFactors=F
+)
+wid.brt.results <- vector("list", nrow(wid.brt.specifications))
+
+for (i in seq_len(nrow(wid.brt.specifications))) {
+  response <- wid.brt.specifications$response[i]
+  inequality.measure <- wid.brt.specifications$inequality.measure[i]
+  wid.brt.results[[i]] <- run.wid.brt(wid.dat,
+                                      response=response,
+                                      inequality.measure=inequality.measure)
+
+  output.prefix <- paste0("WID_BRT_",
+                          wid.safe.filename(inequality.measure),
+                          "_",
+                          wid.safe.filename(response))
+  write.csv(wid.brt.results[[i]]$response.curves,
+            paste0(output.prefix, "_response_curves.csv"),
+            row.names=F)
+  write.csv(wid.brt.results[[i]]$relative.influence,
+            paste0(output.prefix, "_relative_influence.csv"),
+            row.names=F)
+  write.csv(wid.brt.results[[i]]$fit.metrics,
+            paste0(output.prefix, "_fit_metrics.csv"),
+            row.names=F)
+}
+
+
+
+########################################################################
+## regional ecological-footprint boosted regression trees             ##
+########################################################################
+
+# Regional climate anomaly is not yet available. These models use regional
+# total ecological footprint as the response.
+wid.regional.gini <- wid.series[wid.series$scope %in%
+                                  wid.regional.environment$scope, ]
+wid.regional.gini.key <- paste(wid.regional.gini$scope,
+                               wid.regional.gini$year)
+wid.regional.environment.key <- paste(wid.regional.environment$scope,
+                                      wid.regional.environment$year)
+wid.regional.environment.index <- match(wid.regional.gini.key,
+                                        wid.regional.environment.key)
+wid.regional.brt.dat <- data.frame(
+  scope=wid.regional.gini$scope,
+  inequality.measure=wid.regional.gini$inequality.measure,
+  year=wid.regional.gini$year,
+  gini=wid.regional.gini$gini,
+  population=wid.regional.environment$population[wid.regional.environment.index],
+  energy.gj.per.capita=wid.regional.environment$energy.gj.per.capita[
+    wid.regional.environment.index
+  ],
+  footprint.total.gha=wid.regional.environment$footprint.total.gha[
+    wid.regional.environment.index
+  ],
+  stringsAsFactors=F
+)
+wid.regional.brt.dat <- wid.regional.brt.dat[
+  complete.cases(wid.regional.brt.dat), ]
+
+wid.regional.brt.specifications <- expand.grid(
+  scope=sort(unique(wid.regional.brt.dat$scope)),
+  inequality.measure=c("Disposable-income Gini",
+                       "Pre-tax national-income Gini"),
+  stringsAsFactors=F
+)
+wid.regional.brt.results <- vector("list", nrow(wid.regional.brt.specifications))
+
+for (i in seq_len(nrow(wid.regional.brt.specifications))) {
+  scope <- wid.regional.brt.specifications$scope[i]
+  inequality.measure <- wid.regional.brt.specifications$inequality.measure[i]
+  wid.regional.brt.results[[i]] <- run.wid.brt(
+    wid.regional.brt.dat,
+    response="footprint.total.gha",
+    inequality.measure=inequality.measure,
+    scope=scope,
+    predictors=c("population", "energy.gj.per.capita", "gini")
+  )
+
+  output.prefix <- paste0("WID_regional_footprint_BRT_",
+                          wid.safe.filename(scope),
+                          "_",
+                          wid.safe.filename(inequality.measure))
+  write.csv(wid.regional.brt.results[[i]]$response.curves,
+            paste0(output.prefix, "_response_curves.csv"),
+            row.names=F)
+  write.csv(wid.regional.brt.results[[i]]$relative.influence,
+            paste0(output.prefix, "_relative_influence.csv"),
+            row.names=F)
+  write.csv(wid.regional.brt.results[[i]]$fit.metrics,
+            paste0(output.prefix, "_fit_metrics.csv"),
+            row.names=F)
+}
+
+
+
+########################################################################
+## regional CO2-e boosted regression trees                             ##
+########################################################################
+
+wid.regional.emissions.gini <- wid.series[
+  wid.series$scope %in% wid.regional.emissions$scope, ]
+wid.regional.emissions.gini.key <- paste(wid.regional.emissions.gini$scope,
+                                         wid.regional.emissions.gini$year)
+wid.regional.emissions.key <- paste(wid.regional.emissions$scope,
+                                    wid.regional.emissions$year)
+wid.regional.emissions.index <- match(wid.regional.emissions.gini.key,
+                                      wid.regional.emissions.key)
+wid.regional.emissions.environment.key <- paste(
+  wid.regional.environment$scope, wid.regional.environment$year
+)
+wid.regional.emissions.environment.index <- match(
+  wid.regional.emissions.gini.key, wid.regional.emissions.environment.key
+)
+wid.regional.emissions.brt.dat <- data.frame(
+  scope=wid.regional.emissions.gini$scope,
+  inequality.measure=wid.regional.emissions.gini$inequality.measure,
+  year=wid.regional.emissions.gini$year,
+  gini=wid.regional.emissions.gini$gini,
+  population=wid.regional.environment$population[
+    wid.regional.emissions.environment.index
+  ],
+  energy.gj.per.capita=wid.regional.environment$energy.gj.per.capita[
+    wid.regional.emissions.environment.index
+  ],
+  emissions.co2e.tonnes=wid.regional.emissions$emissions.co2e.tonnes[
+    wid.regional.emissions.index
+  ],
+  stringsAsFactors=F
+)
+wid.regional.emissions.brt.dat <- wid.regional.emissions.brt.dat[
+  complete.cases(wid.regional.emissions.brt.dat), ]
+
+wid.regional.emissions.brt.specifications <- expand.grid(
+  scope=sort(unique(wid.regional.emissions.brt.dat$scope)),
+  inequality.measure=c("Disposable-income Gini",
+                       "Pre-tax national-income Gini"),
+  stringsAsFactors=F
+)
+wid.regional.emissions.brt.results <- vector(
+  "list", nrow(wid.regional.emissions.brt.specifications)
+)
+
+for (i in seq_len(nrow(wid.regional.emissions.brt.specifications))) {
+  scope <- wid.regional.emissions.brt.specifications$scope[i]
+  inequality.measure <- wid.regional.emissions.brt.specifications$inequality.measure[i]
+  wid.regional.emissions.brt.results[[i]] <- run.wid.brt(
+    wid.regional.emissions.brt.dat,
+    response="emissions.co2e.tonnes",
+    inequality.measure=inequality.measure,
+    scope=scope,
+    predictors=c("population", "energy.gj.per.capita", "gini")
+  )
+
+  output.prefix <- paste0("WID_regional_emissions_BRT_",
+                          wid.safe.filename(scope),
+                          "_",
+                          wid.safe.filename(inequality.measure))
+  write.csv(wid.regional.emissions.brt.results[[i]]$response.curves,
+            paste0(output.prefix, "_response_curves.csv"),
+            row.names=F)
+  write.csv(wid.regional.emissions.brt.results[[i]]$relative.influence,
+            paste0(output.prefix, "_relative_influence.csv"),
+            row.names=F)
+  write.csv(wid.regional.emissions.brt.results[[i]]$fit.metrics,
+            paste0(output.prefix, "_fit_metrics.csv"),
+            row.names=F)
+}

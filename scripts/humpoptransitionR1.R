@@ -20,7 +20,6 @@ library(truncnorm)
 library(wCorr)
 
 # source files
-setwd("~/Documents/GitHub/globalHumanPopSwitch/scripts")
 source("new_lmer_AIC_tables3.R")
 source("r.squared.R")
 
@@ -84,7 +83,6 @@ NonSeqSample <- function(x, size, ord=1, replace) {
 
 ## Historical estimates of world population
 ## census.gov/data/tables/time-series/demo/international-programs/historical-est-worldpop.html
-setwd("~/Documents/GitHub/globalHumanPopSwitch/data")
 hpop <- read.csv('Npre1950.csv', sep=",", header=T)
 head(hpop)
 hpop$pop.md <- apply(hpop[,c(2,3)], MARGIN=1, median, na.rm=T)
@@ -3323,7 +3321,10 @@ age.mn.out$year[which(age.mn.out$young == max(age.mn.out$young))]
 # Set WID_DATA_DIR to the directory containing the WID_data_XX.csv files.
 # These series are WID's published regional aggregates, not averages of
 # national Gini coefficients.
-wid.dir <- '/Users/brad0317/Documents/Papers/Health/Human pop shift/data/inequality/wid_all_data'
+
+# download full dataset from 'https://wid.world/data/#:~:text=DOWNLOAD%20FULL-,DATASET,-NO%20INDICATOR%20SELECTED'
+# set wid.dir to the directory containing the WID_data_XX.csv files (unzip downloaded file above)
+wid.dir <- 'XXX'  # replace with your local path to WID_data_XX.csv files
 #wid.dir <- Sys.getenv("WID_DATA_DIR")
 if (!nzchar(wid.dir) || !dir.exists(wid.dir)) {
   stop("Set WID_DATA_DIR to the directory containing WID_data_XX.csv files.")
@@ -3384,7 +3385,7 @@ wid.series <- wid.series[order(wid.series$scope,
 
 # Global environmental indicators complete from 1965-2023; WID
 # Gini series provide common 1980-2023 analysis window.
-data.dir.GH <- '/Users/brad0317/Documents/GitHub/globalHumanPopSwitch/data'
+data.dir.GH <- 'XXX' # replace with your local path to the directory containing consump.csv
 wid.environment <- read.csv(file.path(data.dir.GH, "consump.csv"), header=T)
 wid.environment <- data.frame(year=wid.environment$year,
                               pop=wid.environment$pop,
